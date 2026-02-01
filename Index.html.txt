@@ -1,398 +1,55 @@
-# JarJar 6.0 - Ultimate iPad Pro Edition 2026 🚀
-# Optimized for iPad Pro: Touch-friendly UI, responsive layouts, larger fonts/buttons for easy handling
-# All features included: Real-time Polygon data/news, AI Sentiment (transformers), LSTM predictions, Heatmap, Movers, Portfolio ROI, Themes
-# Cross-platform with Flet (Flutter-based) – build as native iOS app for iPad
-# Install: pip install flet plotly pandas requests python-dotenv torch transformers yfinance
-# .env: POLYGON_API_KEY=your_key
-# Run locally: python this_file.py
-# Build for iOS (iPad): On macOS, install Xcode, Flutter – then `flet build ipa` (see instructions below)
-# Touch-optimized: Larger icons, gesture support (e.g., swipe for refresh), tablet-friendly split views
-
-import flet as ft
-import json
-import os
-import random
-import datetime
-import time
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-import requests
-from dotenv import load_dotenv
-import torch
-from transformers import pipeline
-import yfinance as yf
-import numpy as np
-from sklearn.preprocessing import MinMaxScaler
-from torch import nn
-
-load_dotenv()
-
-# ------------------- Config & Storage -------------------
-POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
-if not POLYGON_API_KEY:
-    raise ValueError("Add POLYGON_API_KEY to .env file!")
-
-FAV_FILE = "jj6_fav.json"
-PORTFOLIO_FILE = "jj6_portfolio.json"
-HISTORY_FILE = "jj6_history.json"
-
-favorites = json.loads(open(FAV_FILE).read()) if os.path.exists(FAV_FILE) else []
-portfolio = json.loads(open(PORTFOLIO_FILE).read()) if os.path.exists(PORTFOLIO_FILE) else {}
-history = json.loads(open(HISTORY_FILE).read()) if os.path.exists(HISTORY_FILE) else {}
-
-# ------------------- Sectors & Tickers -------------------
-SECTORS = {
-    "KI/AI": ["NVDA", "MSFT", "GOOGL", "META", "AI-STARTUP1", "AI-STARTUP2"],
-    "Cloud/SaaS": ["AAPL", "AMZN", "CRM"],
-    "Biotech/Gesundheit": ["CRSP", "MRNA", "EDIT"],
-    "Energie/EV": ["TSLA", "NEE", "ENPH"],
-    "Robotik/Automatisierung": ["ROBO", "ABB", "KUKA"],
-    "FinTech/Blockchain": ["SQ", "COIN"],
-    "Traditionell": ["SPY", "QQQ", "JNJ", "PG"]
-}
-
-ALL_TICKERS = [t for sec in SECTORS.values() for t in sec]
-
-# ------------------- Exchanges -------------------
-EXCHANGES = {
-    "NYSE": ("09:30", "16:00", "EST"),
-    "NASDAQ": ("09:30", "16:00", "EST"),
-    "XETRA": ("09:00", "17:30", "CET"),
-    "LSE": ("08:00", "16:30", "GMT")
-}
-TICKER_EXCHANGE = {
-    "AAPL": "NASDAQ", "MSFT": "NASDAQ", "GOOGL": "NASDAQ", "META": "NASDAQ",
-    "NVDA": "NASDAQ", "TSLA": "NASDAQ", "ROBO": "XETRA", "ABB": "XETRA", "KUKA": "XETRA"
-}
-
-# ------------------- News & Alerts -------------------
-simulated_news = {
-    "NVDA": ["AI-Boom treibt Aktien nach oben", "Chip-Mangel belastet Hersteller"],
-    "MSFT": ["Cloud AI stark gefragt", "Regulierung könnte bremsen"]
-}
-manual_news = {}
-news_enabled = True
-alerts_enabled = True
-sentiment_analyzer = pipeline("sentiment-analysis")
-
-# ------------------- Currencies -------------------
-CURRENCIES = {"EUR": 1.0, "USD": 1.1, "GBP": 0.88}
-current_currency = "EUR"
-
-# ------------------- Simple LSTM for AI Predictions -------------------
-class SimpleLSTM(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.lstm = nn.LSTM(1, 50, num_layers=1, batch_first=True)
-        self.fc = nn.Linear(50, 1)
-
-    def forward(self, x):
-        _, (h, _) = self.lstm(x)
-        return self.fc(h[-1])
-
-lstm_model = SimpleLSTM()
-
-def predict_price(ticker, hist):
-    if len(hist) < 10:
-        return None
-    data = np.array(hist).reshape(-1, 1)
-    scaler = MinMaxScaler()
-    data_scaled = scaler.fit_transform(data)
-    X = torch.tensor(data_scaled[:-1]).unsqueeze(0).unsqueeze(2).float()
-    with torch.no_grad():
-        pred = lstm_model(X)
-    return scaler.inverse_transform(pred.numpy())[0][0]
-
-# ------------------- Functions -------------------
-
-def fetch_real_price(ticker):
-    url = f"https://api.polygon.io/v2/last/trade/{ticker}?apiKey={POLYGON_API_KEY}"
-    try:
-        response = requests.get(url).json()
-        if 'results' in response:
-            price = response['results']['p']
-            return round(price * CURRENCIES[current_currency], 2)
-    except:
-        pass
-    return simulated_price(ticker)
-
-def simulated_price(ticker):
-    base = random.uniform(10, 500)
-    news_list = get_news(ticker)
-    bonus = sum(1 if s['label'] == 'POSITIVE' else -1 for n in news_list for s in [analyze_sentiment(n)])
-    return round((base + bonus * 5) * CURRENCIES[current_currency], 2)
-
-def get_news(ticker):
-    url = f"https://api.polygon.io/v2/reference/news?ticker={ticker}&apiKey={POLYGON_API_KEY}"
-    try:
-        response = requests.get(url).json()
-        return [article['title'] for article in response.get('results', [])[:5]]
-    except:
-        return simulated_news.get(ticker, []) + manual_news.get(ticker, [])
-
-def analyze_sentiment(text):
-    return sentiment_analyzer(text)[0]
-
-def potential_score(ticker):
-    score = random.uniform(0, 1)
-    sector_bonus = 0.15 if ticker in SECTORS["KI/AI"] else 0
-    news_list = get_news(ticker)
-    sentiment_bonus = sum(0.05 if analyze_sentiment(n)['label'] == 'POSITIVE' else -0.05 for n in news_list)
-    return min(1, score + sector_bonus + sentiment_bonus)
-
-def update_history(ticker, price):
-    if ticker not in history:
-        history[ticker] = []
-    history[ticker].append(price)
-    with open(HISTORY_FILE, 'w') as f:
-        json.dump(history, f)
-
-def check_alerts(page, ticker, price):
-    if alerts_enabled and ticker in favorites:
-        score = potential_score(ticker)
-        if score > 0.7:
-            page.show_dialog(ft.AlertDialog(title=ft.Text(f"🚀 {ticker} HIGH POTENTIAL"), content=ft.Text(f"Score: {round(score, 2)} - AI Boost!")))
-        news_list = get_news(ticker)
-        if news_list:
-            sent = analyze_sentiment(news_list[-1])
-            color = ft.colors.GREEN if sent['label'] == 'POSITIVE' else ft.colors.RED
-            page.show_snack_bar(ft.SnackBar(content=ft.Text(f"📰 {ticker}: {news_list[-1]} ({sent['label']})"), bgcolor=color))
-
-def toggle_fav(ticker):
-    if ticker in favorites:
-        favorites.remove(ticker)
-    else:
-        favorites.append(ticker)
-    with open(FAV_FILE, 'w') as f:
-        json.dump(favorites, f)
-
-def buy_stock(ticker, qty=1):
-    price = fetch_real_price(ticker)
-    if ticker not in portfolio:
-        portfolio[ticker] = {'qty': 0, 'avg_price': 0, 'purchase_prices': []}
-    current = portfolio[ticker]
-    current['avg_price'] = ((current['avg_price'] * current['qty']) + price * qty) / (current['qty'] + qty)
-    current['qty'] += qty
-    current['purchase_prices'].extend([price] * qty)
-    with open(PORTFOLIO_FILE, 'w') as f:
-        json.dump(portfolio, f)
-    update_history(ticker, price)
-
-def sell_stock(ticker):
-    if ticker in portfolio and portfolio[ticker]['qty'] > 0:
-        portfolio[ticker]['qty'] -= 1
-        if portfolio[ticker]['qty'] == 0:
-            del portfolio[ticker]
-        with open(PORTFOLIO_FILE, 'w') as f:
-            json.dump(portfolio, f)
-
-def calculate_portfolio_performance():
-    total_value = 0
-    total_invested = 0
-    for t, data in portfolio.items():
-        current_price = fetch_real_price(t)
-        value = current_price * data['qty']
-        invested = sum(data.get('purchase_prices', [data['avg_price']] * data['qty']))
-        total_value += value
-        total_invested += invested
-    return {
-        'total_value': round(total_value, 2),
-        'total_invested': round(total_invested, 2),
-        'gain_loss': round(total_value - total_invested, 2),
-        'roi': round(((total_value - total_invested) / total_invested * 100) if total_invested else 0, 2)
-    }
-
-def fetch_market_movers():
-    # Placeholder with yf; enhance with Polygon if needed
-    try:
-        sp500 = yf.download('^GSPC', period='1d')
-        gainers = sp500.nlargest(5, 'Change')['Symbol'].tolist() if 'Change' in sp500 else []
-        losers = sp500.nsmallest(5, 'Change')['Symbol'].tolist() if 'Change' in sp500 else []
-    except:
-        gainers = ['DummyG1', 'DummyG2']
-        losers = ['DummyL1', 'DummyL2']
-    return {'gainers': gainers, 'losers': losers}
-
-def fetch_historical_data(ticker, days=30):
-    end = datetime.date.today()
-    start = end - datetime.timedelta(days=days)
-    url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}?apiKey={POLYGON_API_KEY}"
-    try:
-        response = requests.get(url).json()
-        if 'results' in response:
-            df = pd.DataFrame(response['results'])
-            df['date'] = pd.to_datetime(df['t'], unit='ms')
-            df['close'] = df['c']
-            return df[['date', 'close']]
-    except:
-        pass
-    return pd.DataFrame({"date": pd.date_range(start, end), "close": [simulated_price(ticker) for _ in range(days)]})
-
-# ------------------- UI Components (iPad-Optimized: Larger, Touch-Friendly) -------------------
-def create_stock_card(page, ticker):
-    price = fetch_real_price(ticker)
-    score = potential_score(ticker)
-    pred = predict_price(ticker, history.get(ticker, []))
-    check_alerts(page, ticker, price)
-    color = ft.colors.GREEN_700 if score > 0.7 else (ft.colors.AMBER_700 if score > 0.5 else ft.colors.RED_700)
-    if ticker in SECTORS["KI/AI"]:
-        color = ft.colors.PURPLE_700
-    pred_text = f" | AI Pred: {round(pred, 2)}" if pred else ""
-    return ft.Card(
-        content=ft.Container(
-            content=ft.Column([
-                ft.Row([ft.Text(f"{ticker} - {price} {current_currency}{pred_text}", color=color, weight=ft.FontWeight.BOLD, size=20),  # Larger font
-                        ft.Text(f"Potenzial: {round(score, 2)}", color=color, size=18)]),
-                ft.Row([
-                    ft.IconButton(icon=ft.icons.STAR, icon_size=40, on_click=lambda e: (toggle_fav(ticker), page.update())),  # Larger icons
-                    ft.IconButton(icon=ft.icons.ADD_SHOPPING_CART, icon_size=40, on_click=lambda e: (buy_stock(ticker), page.update())),
-                    ft.IconButton(icon=ft.icons.REMOVE_SHOPPING_CART, icon_size=40, on_click=lambda e: (sell_stock(ticker), page.update()))
-                ])
-            ]),
-            padding=20  # More padding for touch
-        ),
-        elevation=10,
-        color=ft.colors.GREY_800
-    )
-
-def create_news_feed(ticker):
-    news_list = get_news(ticker)
-    return ft.Column([ft.Text(n, color=ft.colors.BLUE_GREY_200 if analyze_sentiment(n)['label'] == 'POSITIVE' else ft.colors.RED_200, size=16) for n in news_list])  # Larger text
-
-def create_chart_figure(sector):
-    fig = px.line(title=sector)
-    for ticker in SECTORS[sector]:
-        df = fetch_historical_data(ticker)
-        fig.add_scatter(x=df['date'], y=df['close'], mode='lines+markers', name=ticker)
-        if ticker in SECTORS["KI/AI"]:
-            fig.data[-1].line.color = 'purple'
-    return fig
-
-def create_heatmap():
-    prices = {t: fetch_real_price(t) for t in ALL_TICKERS}
-    changes = {t: random.uniform(-5, 5) for t in ALL_TICKERS}  # Real % from API if extended
-    df = pd.DataFrame({'Ticker': list(prices.keys()), 'Price': list(prices.values()), 'Change': list(changes.values())})
-    fig = px.treemap(df, path=['Ticker'], values='Price', color='Change', color_continuous_scale='RdYlGn',
-                     title="Market Heatmap")
-    return fig
-
-def create_market_movers_section(movers):
-    gainers = ft.Column([ft.Text(g, size=18) for g in movers['gainers']])
-    losers = ft.Column([ft.Text(l, size=18) for l in movers['losers']])
-    return ft.Row([ft.Container(ft.Column([ft.Text("Top Gainers", size=22), gainers])), ft.Container(ft.Column([ft.Text("Top Losers", size=22), losers]))])
-
-# ------------------- Main App (Responsive for iPad: Split View if wide screen) -------------------
-def main(page: ft.Page):
-    page.title = "JarJar 6.0 - iPad Pro Rocking Edition"
-    page.theme_mode = ft.ThemeMode.DARK
-    page.bgcolor = ft.colors.GREY_900
-    page.padding = 30  # More space for tablet
-    page.scroll = ft.ScrollMode.AUTO
-    page.fonts = {"default": "system-ui"}  # Modern font
-    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
-
-    def toggle_news(e):
-        global news_enabled
-        news_enabled = not news_enabled
-        page.update()
-
-    def toggle_alerts(e):
-        global alerts_enabled
-        alerts_enabled = not alerts_enabled
-        page.update()
-
-    def change_currency(e):
-        global current_currency
-        current_currency = e.control.value
-        page.update()
-
-    def toggle_theme(e):
-        page.theme_mode = ft.ThemeMode.LIGHT if page.theme_mode == ft.ThemeMode.DARK else ft.ThemeMode.DARK
-        page.update()
-
-    # Gesture: Swipe down to refresh
-    page.on_pan_update = lambda e: page.update() if e.delta_y > 50 else None  # Simple swipe refresh
-
-    # Header
-    page.add(ft.AppBar(title=ft.Text("JarJar 6.0 - Sascha's Epic Dashboard 🚀", size=28), center_title=True, bgcolor=ft.colors.INDIGO_900,
-                       actions=[ft.IconButton(ft.icons.BRIGHTNESS_6, icon_size=32, on_click=toggle_theme)]))
-
-    # Controls (larger for touch)
-    page.add(
-        ft.Row([
-            ft.Switch(label="News Feed", value=news_enabled, on_change=toggle_news, scale=1.2),
-            ft.Switch(label="AI Alerts", value=alerts_enabled, on_change=toggle_alerts, scale=1.2),
-            ft.Dropdown(options=[ft.dropdown.Option(k) for k in CURRENCIES], value=current_currency, on_change=change_currency, width=150, height=60)
-        ], alignment=ft.MainAxisAlignment.CENTER)
-    )
-
-    # Responsive Layout: If wide (iPad >1000px), use Row for split view
-    if page.window_width > 1000:  # iPad Pro optimization
-        main_content = ft.Row(expand=True, spacing=20)
-    else:
-        main_content = ft.Column(expand=True, spacing=20)
-
-    # Market Movers
-    movers = fetch_market_movers()
-    movers_section = ft.Container(content=create_market_movers_section(movers), margin=10, bgcolor=ft.colors.BLUE_GREY_800, padding=20, border_radius=15)
-    main_content.controls.append(movers_section) if isinstance(main_content, ft.Column) else main_content.controls.append(movers_section)
-
-    # Favorites
-    fav_container = ft.Column([create_stock_card(page, t) for t in favorites])
-    fav_section = ft.Container(content=ft.Column([ft.Text("Favoriten", size=28, weight=ft.FontWeight.BOLD), fav_container]), margin=10)
-    main_content.controls.append(fav_section) if isinstance(main_content, ft.Column) else main_content.controls.append(fav_section)
-
-    # Portfolio
-    perf = calculate_portfolio_performance()
-    port_summary = ft.Column([
-        ft.Text(f"Total Value: {perf['total_value']} {current_currency}", size=20),
-        ft.Text(f"Invested: {perf['total_invested']} {current_currency}", size=20),
-        ft.Text(f"Gain/Loss: {perf['gain_loss']} ({perf['roi']}%)", color=ft.colors.GREEN if perf['gain_loss'] > 0 else ft.colors.RED, size=20)
-    ])
-    port_section = ft.Container(content=ft.Column([ft.Text("Portfolio Performance", size=28, weight=ft.FontWeight.BOLD), port_summary]), margin=10, bgcolor=ft.colors.TEAL_800, padding=20, border_radius=15)
-    main_content.controls.append(port_section) if isinstance(main_content, ft.Column) else main_content.controls.append(port_section)
-
-    # News if enabled
-    if news_enabled:
-        news_feed = ft.Column()
-        for t in favorites:
-            news_feed.controls.append(ft.Column([ft.Text(f"News for {t}", size=22), create_news_feed(t)]))
-        news_section = ft.Container(content=ft.Column([ft.Text("Real-Time News (AI Analyzed)", size=28), news_feed]), margin=10)
-        main_content.controls.append(news_section) if isinstance(main_content, ft.Column) else main_content.controls.append(news_section)
-
-    # Charts & Heatmap in tabs for better navigation on iPad
-    tab_controls = []
-    for sector in SECTORS:
-        fig = create_chart_figure(sector)
-        tab_controls.append(ft.Tab(text=sector, content=ft.PlotlyChart(fig, expand=True)))
-    heatmap_fig = create_heatmap()
-    tab_controls.append(ft.Tab(text="Heatmap", content=ft.PlotlyChart(heatmap_fig, expand=True)))
-
-    charts_section = ft.Tabs(tabs=tab_controls, expand=True)
-    main_content.controls.append(charts_section) if isinstance(main_content, ft.Column) else main_content.controls.append(charts_section)
-
-    page.add(main_content)
-
-    # Input Field
-    input_field = ft.TextField(label="Add Ticker/News", width=400, height=60)
-    def add_manual(e):
-        value = input_field.value.upper()
-        if value in ALL_TICKERS:
-            toggle_fav(value)
-        else:
-            for t in favorites:
-                manual_news.setdefault(t, []).append(value)
-        page.update()
-    page.add(ft.Row([input_field, ft.ElevatedButton("Add/Update", on_click=add_manual, height=60, style=ft.ButtonStyle(padding=20))], alignment=ft.MainAxisAlignment.CENTER))
-
-    # Live Update (15s)
-    def live_update():
-        while True:
-            time.sleep(15)
-            page.update()
-
-    import threading
-    threading.Thread(target=live_update, daemon=True).start()
-
-ft.app(main)
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mein Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body class="bg-light">
+    <div class="container my-5">
+      <h1 class="text-center mb-4">Mein Web-Dashboard</h1>
+      <div class="row">
+        <div class="col-md-6">
+          <div class="card">
+            <div class="card-body">
+              <h5 class="card-title">Beispiel-Daten</h5>
+              <p class="card-text">Hier könnten KPIs stehen.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card">
+            <div class="card-body">
+              <h5 class="card-title">Diagramm</h5>
+              <canvas id="myChart" height="200"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      const ctx = document.getElementById('myChart');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['Rot', 'Blau', 'Gelb', 'Grün', 'Lila', 'Orange'],
+          datasets: [{
+            label: 'Anzahl',
+            data: [12, 19, 3, 5, 2, 3],
+            borderWidth: 1
+          }]
+        },
+        options: {
+          scales: {
+            y: {
+              beginAtZero: true
+            }
+          }
+        }
+      });
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+  </body>
+</html>
